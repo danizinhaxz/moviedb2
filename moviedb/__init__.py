@@ -59,6 +59,9 @@ def create_app(config_filename: str = 'config.dev.json') -> Flask:
     db.init_app(app)
     migrate.init_app(app, db, compare_type=True)
     login_manager.init_app(app)
+    login_manager.login_view = 'auth.login'
+    login_manager.login_message = 'Para acessar este recurso, você precisa estar logado'
+    login_manager.login_message_category = "warning"
 
     app.logger.debug("Registrando blueprints")
     from moviedb.blueprints.root import bp as root_bp

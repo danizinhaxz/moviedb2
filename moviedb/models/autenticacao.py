@@ -1,7 +1,9 @@
 import uuid
+from sqlite3 import Date
 
 from flask_login import UserMixin
-from sqlalchemy import Boolean, Column, select, String, Uuid
+from sqlalchemy import Boolean, Column, select, String, Uuid, func
+from sqlalchemy.dialects.mysql import DATETIME
 
 from moviedb import db
 from moviedb.models.mixins import BasicRepositoryMixin
@@ -19,6 +21,7 @@ class User(db.Model, BasicRepositoryMixin, UserMixin):
     email_normalizado = Column(String(180), nullable=False, unique=True, index=True)
     password_hash = Column(String(256), nullable=False)
     ativo = Column(Boolean, nullable=False, default=True)
+    data_cadastro = Column(DATETIME, nullable=False, server_default=func.now())
 
     @property
     def email(self):
