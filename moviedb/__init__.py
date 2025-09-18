@@ -51,7 +51,10 @@ def create_app(config_filename: str = 'config.dev.json') -> Flask:
         secret_key = os.urandom(32).hex()
         app.logger.warning("A chave 'SECRET_KEY' não está presente no "
                            "arquivo de configuração")
-        app.logger.warning("Gerando uma aleatória: '%s'" % (secret_key,))
+        app.logger.warning("Gerando chave aleatória: '%s'" % (secret_key,))
+        app.logger.warning("Para não invalidar os logins persistentes e os JWT "
+                           "gerados efetuados nesta instância da aplicação, "
+                           "adicione a chave acima ao arquivo de configuração")
         app.config["SECRET_KEY"] = secret_key
 
     app.logger.debug("Registrando modulos")
@@ -59,9 +62,6 @@ def create_app(config_filename: str = 'config.dev.json') -> Flask:
     db.init_app(app)
     migrate.init_app(app, db, compare_type=True)
     login_manager.init_app(app)
-    login_manager.login_view = 'auth.login'
-    login_manager.login_message = 'Para acessar este recurso, você precisa estar logado'
-    login_manager.login_message_category = "warning"
 
     app.logger.debug("Registrando blueprints")
     from moviedb.blueprints.root import bp as root_bp
@@ -76,6 +76,7 @@ def create_app(config_filename: str = 'config.dev.json') -> Flask:
         return dict(app_config=app.config)
 
     app.logger.debug("Registrando o callback do login manager")
+
     @login_manager.user_loader
     def load_user(user_id):  # https://flask-login.readthedocs.io/en/latest/#alternative-tokens
         import uuid

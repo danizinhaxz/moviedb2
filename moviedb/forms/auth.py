@@ -1,5 +1,8 @@
+from flask import current_app
+from flask_login import current_user
 from flask_wtf import FlaskForm
-from wtforms.fields.simple import BooleanField, PasswordField, StringField, SubmitField
+from flask_wtf.file import FileAllowed, FileField
+from wtforms.fields.simple import BooleanField, HiddenField, PasswordField, StringField, SubmitField
 from wtforms.validators import Email, EqualTo, InputRequired, Length, ValidationError
 
 
@@ -33,51 +36,21 @@ class UniqueEmail(object):
 
 class SenhaComplexa(object):
     """
-    Validador WTForms para garantir que a senha informada atende aos requisitos de complexidade definidos.
+    Validador WTForms para garantir que a senha informada atende aos requisitos de complexidade
+    definidos.
 
-    Args:
-        tamanho (int): Tamanho mínimo da senha.
-        maiusculas (bool): Se deve exigir ao menos uma letra maiúscula.
-        minusculas (bool): Se deve exigir ao menos uma letra minúscula.
-        digitos (bool): Se deve exigir ao menos um dígito.
-        simbolos (bool): Se deve exigir ao menos um símbolo.
-        message (str, opcional): Mensagem de erro personalizada.
+    Os requisitos são definidos pelas seguintes chaves inteiras e booleanas no
+    dicionário de configuração da aplicação:
+
+    - PASSWORD_MIN: 8
+    - PASSWORD_MINUSCULA: false
+    - PASSWORD_NUMERO: false
+    - PASSWORD_SIMBOLO: false
+    - PASSWORD_MAIUSCULA: false
     """
-    def __init__(self,
-                 tamanho: int = 8,
-                 maiusculas: bool = False,
-                 minusculas: bool = False,
-                 digitos: bool = False,
-                 simbolos: bool = False,
-                 message: str = None):
-        """
-        Inicializa o validador de senha complexa com os requisitos especificados.
 
-        Args:
-            tamanho (int): Tamanho mínimo da senha.
-            maiusculas (bool): Exige letra maiúscula.
-            minusculas (bool): Exige letra minúscula.
-            digitos (bool): Exige dígito.
-            simbolos (bool): Exige símbolo.
-            message (str, opcional): Mensagem de erro personalizada.
-        """
-        self.tamanho = tamanho
-        self.maiusculas = maiusculas
-        self.minusculas = minusculas
-        self.digitos = digitos
-        self.simbolos = simbolos
-        if message is None:
-            message = [ f"A senha deve ter ao menos {tamanho} caracteres" ]
-            if maiusculas:
-                message.append("uma letra maiúscula")
-            if minusculas:
-                message.append("uma letra minúscula")
-            if digitos:
-                message.append("um dígito")
-            if simbolos:
-                message.append("um símbolo")
-            message = ", ".join(message)
-        self.message = message
+    def __init__(self):
+        pass
 
     def __call__(self, form, field):
         """
@@ -90,20 +63,98 @@ class SenhaComplexa(object):
         Raises:
             ValidationError: Se a senha não atender aos requisitos de complexidade.
         """
+        from flask import current_app
         import re
-        senha = field.data
-        valida = True
-        valida = valida and (len(senha) >= self.tamanho)
-        if self.maiusculas:
-            valida = valida and (re.search(r'[A-Z]', senha) is not None)
-        if self.minusculas:
-            valida = valida and (re.search(r'[a-z]', senha) is not None)
-        if self.digitos:
-            valida = valida and (re.search(r'\d', senha) is not None)
-        if self.simbolos:
-            valida = valida and (re.search(r'\W', senha) is not None)
-        if not valida:
+        from collections import namedtuple
+
+        Teste = namedtuple('Teste', ['config', 'mensagem', 're'])
+
+        lista_de_testes = [
+            Teste('PASSWORD_MAIUSCULA', "letras maiúsculas", r'[A-Z]'),
+            Teste('PASSWORD_MINUSCULA', "letras minúsculas", r'[a-z]'),
+            Teste('PASSWORD_NUMERO', "números", r'\d'),
+            Teste('PASSWORD_SIMBOLO', "símbolos especiais", r'\W')
+        ]
+
+        min_caracteres = current_app.config.get('PASSWORD_MIN', 8)
+        senha_valida = (len(field.data) >= min_caracteres)
+        mensagens = [f"A sua senha precisa ter pelo menos {min_caracteres} caracteres"]
+
+        for teste in lista_de_testes:
+            if current_app.config.get(teste.config, False):
+                senha_valida = senha_valida and (re.search(teste.re, field.data) is not None)
+                mensagens.append(teste.mensagem)
+
+        mensagem = ", ".join(mensagens)
+        pos = mensagem.rfind(', ')
+        if pos > -1:
+            mensagem = mensagem[:pos] + ' e ' + mensagem[pos + 2:]
+
+        if not senha_valida:
+            raise ValidationError(mensagem)
+
+        return
+
+
+class DadosImutaveisDoUsuario:
+    """
+    Validador WTForms para garantir que um campo não seja modificado por um usuário.
+
+    Este validador compara o valor do campo com o valor correspondente no
+    objeto `current_user`. Se os valores forem diferentes, uma `ValidationError`
+    é levantada.
+
+    Casos limite:
+        - Usuário não autenticado: lança exceção.
+        - Campo 'id' convertido para string para garantir comparação correta.
+    """
+
+    def __init__(self, field_name: str, message: str = None) -> None:
+        """
+        Inicializa o validador de campos imutáveis do usuário.
+
+        Args:
+            field_name (str): Nome do atributo no objeto `current_user` a ser comparado.
+            message (str, opcional): Mensagem de erro personalizada.
+
+        Design:
+            - Permite customização da mensagem de erro.
+        """
+        self.field_name = field_name
+        self.message = message or (
+            f"Tentativa de modificação não autorizada do campo {field_name}"
+        )
+
+    def __call__(self, form, field) -> None:
+        """
+        Executa a validação do campo imutável.
+
+        Utiliza logging para registrar tentativas de violação.
+
+        Args:
+            form: O formulário WTForms sendo validado.
+            field: O campo a ser verificado.
+
+        Raises:
+            ValidationError: Se o usuário não estiver autenticado ou se o valor
+            do campo for diferente do valor esperado.
+        """
+        if not current_user.is_authenticated:
+            raise ValidationError("Usuário não autenticado")
+
+        expected_value = getattr(current_user, self.field_name)
+        if self.field_name == 'id':
+            expected_value = str(expected_value)
+
+        if field.data != expected_value:
+            current_app.logger.warning("Violação da integridade dos dados")
+            current_app.logger.warning(
+                    f"Usuário {current_user.id} tentou "
+                    f"modificar o campo {self.field_name} "
+                    f"de '{expected_value}' para '{field.data}'"
+            )
             raise ValidationError(self.message)
+
 
 class RegistrationForm(FlaskForm):
     nome = StringField(
@@ -119,8 +170,7 @@ class RegistrationForm(FlaskForm):
     password = PasswordField(
             label="Senha",
             validators=[InputRequired(message="É necessário escolher uma senha"),
-                        SenhaComplexa(tamanho=10, maiusculas=True, minusculas=True, digitos=True)
-                        ])
+                        SenhaComplexa()])
     password2 = PasswordField(
             label="Confirme a senha",
             validators=[InputRequired(message="É necessário repetir a senha"),
@@ -140,3 +190,49 @@ class LoginForm(FlaskForm):
             label="Permanecer conectado?",
             default=True)
     submit = SubmitField("Entrar")
+
+
+class SetNewPasswordForm(FlaskForm):
+    password = PasswordField(
+            label="Nova senha",
+            validators=[InputRequired(message="É necessário escolher uma senha"),
+                        SenhaComplexa()])
+    password2 = PasswordField(
+            label="Confirme a nova senha",
+            validators=[InputRequired(message="É necessário repetir a nova senha"),
+                        EqualTo(fieldname='password',
+                                message="As senhão não são iguais")])
+    submit = SubmitField("Cadastrar a nova senha")
+
+
+class AskToResetPasswordForm(FlaskForm):
+    email = StringField(
+            label="Email",
+            validators=[
+                InputRequired(message="É obrigatório informar o email para o qual se deseja "
+                                      "definir nova senha"),
+                Email(message="Informe um email válido"),
+                Length(max=180, message="O email pode ter até 180 caracteres")
+            ])
+    submit = SubmitField("Redefinir a senha")
+
+
+class ProfileForm(FlaskForm):
+    id = HiddenField(validators=[DadosImutaveisDoUsuario('id')])
+
+    nome = StringField(
+            label="Nome",
+            validators=[InputRequired(message="É obrigatório informar um nome para cadastro"),
+                        Length(max=60,
+                               message="O nome pode ter até 60 caracteres")])
+    email = StringField(
+            label="Email",
+            validators=[DadosImutaveisDoUsuario('email')])
+
+    foto_raw = FileField(
+            label="Foto de perfil",
+            validators=[FileAllowed(upload_set=['jpg', 'jpeg', 'png'],
+                                    message="Apenas arquivos JPG ou PNG")])
+
+    submit = SubmitField("Efetuar as mudanças...")
+    remover_foto = SubmitField("e remover foto")
